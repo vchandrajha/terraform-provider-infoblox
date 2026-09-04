@@ -33,6 +33,10 @@ type CaseStep struct {
 	// PrerequisitesHCL overrides ResourceCase.PrerequisitesHCL for steps that need different prereqs.
 	PrerequisitesHCL string
 	PairChecks       map[string]string
+	// ExpectError, when set, is the pattern the step must fail with, for cases that
+	// assert a validation rather than a successful apply. Compiled at parse time so a
+	// bad pattern is reported against the case file instead of panicking mid-run.
+	ExpectError *regexp.Regexp
 }
 
 // ResourceCase is the per-subtest configuration for a Terraform resource acceptance test.
@@ -137,6 +141,11 @@ func runResourceCase(t *testing.T, resourceType string, rc *ResourceCase, checks
 		step := resource.TestStep{
 			Config: fullConfig,
 			Check:  resource.ComposeTestCheckFunc(checkFuncs...),
+		}
+		if st.ExpectError != nil {
+			step.ExpectError = st.ExpectError
+			// The apply never completes, so there is no state to verify.
+			step.Check = nil
 		}
 		if rc.ExpectNonEmptyPlan {
 			step.ExpectNonEmptyPlan = true
@@ -459,6 +468,7 @@ func parseCaseStep(body hcl.Body, src []byte) (CaseStep, error) {
 			{Name: "check_pair"},
 			{Name: "depends_on"},
 			{Name: "prerequisites_hcl"},
+			{Name: "expect_error"},
 		},
 		Blocks: []hcl.BlockHeaderSchema{
 			{Type: "common"},
@@ -496,6 +506,17 @@ func parseCaseStep(body hcl.Body, src []byte) (CaseStep, error) {
 			return st, err
 		}
 		st.PrerequisitesHCL = hcltext
+	}
+	if attr, ok := content.Attributes["expect_error"]; ok {
+		val, diags := attr.Expr.Value(nil)
+		if diags.HasErrors() || !val.IsKnown() || val.IsNull() || val.Type() != cty.String {
+			return st, fmt.Errorf("expect_error at %s must be a static string", attr.Range)
+		}
+		re, err := regexp.Compile(val.AsString())
+		if err != nil {
+			return st, fmt.Errorf("expect_error at %s is not a valid regexp: %w", attr.Range, err)
+		}
+		st.ExpectError = re
 	}
 
 	if attr, ok := content.Attributes["depends_on"]; ok {

@@ -339,3 +339,41 @@ case "name" {
   }
 
 }
+
+# Literal ref: rejected while the config is validated.
+case "dhcp_associated_objects_rejects_host_record_at_plan" {
+  backend  = "nios"
+  parallel = true
+
+  step {
+    nios {
+      name                    = "{{random}}"
+      dhcp_associated_objects = ["record:host/ZG5zLmhvc3QkLl9kZWZhdWx0LmNvbS5zdXBlcmhvc3QtYWNjdGVzdC5wYXJlbnQtcmVjb3JkLWhvc3Q:parent-record-host.superhost-acctest.com/default"]
+    }
+    expect_error = "Host record can only be associated with DNS Associated Objects"
+  }
+
+}
+
+# Ref embeds a prerequisite's id, so it is unknown at plan and only resolves during apply.
+case "dhcp_associated_objects_rejects_host_record_at_apply" {
+  backend  = "nios"
+  parallel = true
+  prerequisites_hcl = <<-PREREQ
+  resource "infoblox_zone_auth" "unknown_ref_source" {
+    nios = {
+      fqdn = "{{random2}}.com"
+      view = "default"
+    }
+  }
+  PREREQ
+
+  step {
+    nios {
+      name                    = "{{random}}"
+      dhcp_associated_objects = ["record:host/${infoblox_zone_auth.unknown_ref_source.id}"]
+    }
+    expect_error = "Host record can only be associated with DNS Associated Objects"
+  }
+
+}
